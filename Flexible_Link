@@ -1,0 +1,101 @@
+%% modal_direct_det.m
+clc; clear; close all
+
+%% 1) PARAMETERS
+L    = 0.05;           % m
+rho = 1.176/L ;          % kg
+EI   = 4.65 ;        
+mp   = 10.28;          % kg
+Jp   = 1 ;       % kg·m^2
+
+% pre‐factor for omega^2 = (EI/(rho*L^4)) * lambda^4
+omega2_fact = EI/(rho*L^4);
+
+%% --- Helper functions at s = 1 (vector‐safe) ---
+C    = @(lam) cosh(lam)   - cos(lam);
+S    = @(lam) sinh(lam)   - sin(lam);
+Cp   = @(lam) lam.*(sinh(lam) + sin(lam));      % φ'(1)
+Sp   = @(lam) lam.*(cosh(lam) - cos(lam));      % φ'(1) second part
+Cpp  = @(lam) lam.^2.*(cosh(lam) - cos(lam));   % φ''(1)
+Spp  = @(lam) lam.^2.*(sinh(lam) - sin(lam));   % φ''(1)
+Cppp = @(lam) lam.^3.*(sinh(lam) + sin(lam));   % φ'''(1)
+Sppp = @(lam) lam.^3.*(cosh(lam) - cos(lam));   % φ'''(1)
+
+%% --- Boundary‐condition matrix entries (vector‐safe) ---
+omega2_fact = EI/(rho*L^4);
+
+M11 = @(lam) -EI/L^3 .* Cppp(lam) ...
+             - mp.*(omega2_fact.*lam.^4).*C(lam);
+
+M12 = @(lam) -EI/L^3 .* Sppp(lam) ...
+             - mp.*(omega2_fact.*lam.^4).*S(lam);
+
+M21 = @(lam)  EI/L^3 .* Cpp(lam) ...
+             - Jp/L^2 .* (omega2_fact.*lam.^4).*Cp(lam);
+
+M22 = @(lam)  EI/L^3 .* Spp(lam) ...
+             - Jp/L^2 .* (omega2_fact.*lam.^4).*Sp(lam);
+
+% determinant must vanish
+detM = @(lam) M11(lam).*M22(lam) - M12(lam).*M21(lam);
+
+%% 4) LOCATE ROOTS OF detM(lam)=0
+lam_roots = [];
+f = detM;
+
+% scan over lam in [0.1, 50] for sign changes
+lam_scan = linspace(0.1,50,2000);
+dvals    = f(lam_scan);
+
+for k=1:length(lam_scan)-1
+    if sign(dvals(k))~=sign(dvals(k+1))
+        lam0 = fzero(f, [lam_scan(k), lam_scan(k+1)]);
+        if lam0>0 && all(abs(lam_roots - lam0)>1e-4)
+            lam_roots(end+1) = lam0; %#ok<SAGROW>
+        end
+    end
+end
+
+%% 5) CONVERT TO NATURAL FREQUENCIES
+omega = sqrt(omega2_fact * lam_roots.^4);
+freqs = omega/(2*pi);
+
+fprintf('Mode   lambda      f (Hz)\n');
+for i=1:length(freqs)
+    fprintf(' %2d   %8.4f   %8.4f\n', i, lam_roots(i), freqs(i));
+end
+
+%% 6) MODAL SUPERPOSITION
+N_modes = length(lam_roots);
+s = linspace(0,1,200);
+t = linspace(0,0.05,400);
+V = zeros(numel(s),numel(t));
+
+% build normalized phi_i(s)
+Phi = zeros(numel(s),N_modes);
+for i=1:N_modes
+    lam = lam_roots(i);
+    ph = cosh(lam*s) - cos(lam*s) ...
+       + sinh(lam*s) - sin(lam*s);
+    Phi(:,i) = ph/max(abs(ph));  % normalize
+end
+
+% superpose
+for i=1:N_modes
+    V = V + Phi(:,i)*cos(omega(i)*t);
+end
+
+%% 7) PLOT MODE SHAPES & FINAL DISPLACEMENT
+figure; hold on;
+for i=1:N_modes
+    plot(s*L,Phi(:,i),'LineWidth',1.2);
+end
+xlabel('x [m]'); ylabel('\phi_i(x)');
+title('Mode Shapes'); grid on;
+
+figure;
+plot(s*L, V(:,end),'LineWidth',1.5);
+xlabel('x [m]'); ylabel('v(x,t_{end})');
+title(sprintf('Displacement at t=%.3fs',t(end)));
+grid on;
+
